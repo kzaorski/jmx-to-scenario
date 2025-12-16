@@ -24,6 +24,15 @@ class CaptureConfig:
 
 
 @dataclass
+class FileConfig:
+    """File upload configuration from HTTPFileArg."""
+
+    path: str
+    param: str
+    mime_type: str | None = None
+
+
+@dataclass
 class AssertConfig:
     """Assertion configuration from ResponseAssertion/JSONPathAssertion."""
 
@@ -45,6 +54,18 @@ class LoopConfig:
 
 
 @dataclass
+class ParsingContext:
+    """Context passed during recursive sampler extraction.
+
+    Tracks parent controller state to apply context to child samplers.
+    """
+
+    in_random_controller: bool = False
+    transaction_name: str | None = None
+    pending_think_time: int | None = None
+
+
+@dataclass
 class ExtractedSampler:
     """Intermediate representation of HTTP sampler from JMX."""
 
@@ -58,10 +79,12 @@ class ExtractedSampler:
     payload: dict[str, Any] | str | None = None
     params: dict[str, str] = field(default_factory=dict)
     headers: dict[str, str] = field(default_factory=dict)
+    files: list[FileConfig] = field(default_factory=list)
     captures: list[CaptureConfig] = field(default_factory=list)
     assertions: AssertConfig | None = None
     loop: LoopConfig | None = None
     think_time: int | None = None
+    random: bool = False  # True if sampler is inside RandomController
 
 
 @dataclass
@@ -80,15 +103,17 @@ class ScenarioStep:
     """A step in the pt_scenario.yaml output."""
 
     name: str
-    endpoint: str  # "METHOD /path" format
+    endpoint: str | None = None  # "METHOD /path" format, None for think_time-only steps
     enabled: bool = True
     headers: dict[str, str] = field(default_factory=dict)
     params: dict[str, Any] = field(default_factory=dict)
     payload: dict[str, Any] | str | None = None
+    files: list[dict[str, str]] = field(default_factory=list)
     capture: list[dict[str, Any] | str] = field(default_factory=list)
     assert_config: dict[str, Any] | None = None
     loop: dict[str, Any] | None = None
     think_time: int | None = None
+    random: bool = False  # True for random selection group
 
 
 @dataclass

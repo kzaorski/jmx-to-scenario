@@ -5,6 +5,7 @@ from typing import Any
 from jmx_to_scenario.core.data_types import (
     CaptureConfig,
     ExtractedSampler,
+    FileConfig,
     ParsedScenario,
     ScenarioSettings,
     ScenarioStep,
@@ -37,7 +38,20 @@ class ScenarioBuilder:
         Returns:
             ParsedScenario ready for YAML output
         """
-        steps = [self._sampler_to_step(sampler) for sampler in samplers]
+        steps: list[ScenarioStep] = []
+        for sampler in samplers:
+            # Create main step (without think_time - it will be separate)
+            main_step = self._sampler_to_step(sampler, include_think_time=False)
+            steps.append(main_step)
+
+            # If sampler has think_time, create a separate think_time step
+            if sampler.think_time is not None:
+                think_time_step = ScenarioStep(
+                    name="Think Time",
+                    endpoint=None,
+                    think_time=sampler.think_time,
+                )
+                steps.append(think_time_step)
 
         return ParsedScenario(
             name=name,
@@ -51,11 +65,15 @@ class ScenarioBuilder:
         """Get accumulated warnings."""
         return self._warnings
 
-    def _sampler_to_step(self, sampler: ExtractedSampler) -> ScenarioStep:
+    def _sampler_to_step(
+        self, sampler: ExtractedSampler, include_think_time: bool = True
+    ) -> ScenarioStep:
         """Convert ExtractedSampler to ScenarioStep.
 
         Args:
             sampler: Extracted sampler data
+            include_think_time: Whether to include think_time in this step.
+                               Set to False when think_time will be a separate step.
 
         Returns:
             ScenarioStep for YAML output
@@ -78,6 +96,9 @@ class ScenarioBuilder:
         # Filter out empty params
         params = {k: v for k, v in sampler.params.items() if v}
 
+        # Convert files to YAML format
+        files = self._format_files(sampler.files)
+
         return ScenarioStep(
             name=sampler.name,
             endpoint=endpoint,
@@ -85,10 +106,12 @@ class ScenarioBuilder:
             headers=headers if headers else {},
             params=params if params else {},
             payload=sampler.payload,
+            files=files,
             capture=capture,
             assert_config=assert_config,
             loop=loop,
-            think_time=sampler.think_time,
+            think_time=sampler.think_time if include_think_time else None,
+            random=sampler.random,
         )
 
     def _format_captures(self, captures: list[CaptureConfig]) -> list[dict[str, Any] | str]:
@@ -188,3 +211,26 @@ class ScenarioBuilder:
             result["variable"] = loop.variable
 
         return result if result else None
+
+    def _format_files(self, files: list[FileConfig]) -> list[dict[str, str]]:
+        """Format file configs for YAML output.
+
+        Args:
+            files: List of FileConfig objects
+
+        Returns:
+            List of file entries in YAML format
+        """
+        result: list[dict[str, str]] = []
+
+        for file_config in files:
+            file_dict: dict[str, str] = {
+                "path": file_config.path,
+                "param": file_config.param,
+            }
+            # Only include mime_type if explicitly set
+            if file_config.mime_type:
+                file_dict["mime_type"] = file_config.mime_type
+            result.append(file_dict)
+
+        return result

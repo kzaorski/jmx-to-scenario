@@ -437,7 +437,53 @@ assert:
     name: "TestDog"  # Simplified from JSONPath $.name
 ```
 
-### 2.14 ConstantTimer
+### 2.14 HTTPFileArgs (File Uploads)
+
+File upload configuration within HTTPSamplerProxy:
+
+```xml
+<HTTPSamplerProxy testname="Upload Document" enabled="true">
+  <stringProp name="HTTPSampler.method">POST</stringProp>
+  <stringProp name="HTTPSampler.path">/api/documents/upload</stringProp>
+  <elementProp name="HTTPsampler.Files" elementType="HTTPFileArgs">
+    <collectionProp name="HTTPFileArgs.files">
+      <elementProp name="document.pdf" elementType="HTTPFileArg">
+        <stringProp name="File.path">document.pdf</stringProp>
+        <stringProp name="File.paramname">file</stringProp>
+        <stringProp name="File.mimetype">application/pdf</stringProp>
+      </elementProp>
+    </collectionProp>
+  </elementProp>
+</HTTPSamplerProxy>
+```
+
+**Properties to extract:**
+| Property | Description |
+|----------|-------------|
+| `File.path` | Path to file to upload |
+| `File.paramname` | Form field parameter name |
+| `File.mimetype` | MIME type of file |
+
+**Conversion to pt_scenario:**
+```yaml
+files:
+  - path: "document.pdf"
+    param: "file"
+    mime_type: "application/pdf"
+```
+
+**Multiple files:**
+```yaml
+files:
+  - path: "report.pdf"
+    param: "document"
+    mime_type: "application/pdf"
+  - path: "image.png"
+    param: "image"
+    mime_type: "image/png"
+```
+
+### 2.15 ConstantTimer
 
 Fixed delay between requests:
 
@@ -572,6 +618,7 @@ scenario:                       # Required
 | `headers` | object | No | HTTP headers |
 | `params` | object | No | Query parameters |
 | `payload` | object | No | Request body (JSON) |
+| `files` | array | No | File uploads |
 | `capture` | array | No | Variables to extract |
 | `assert` | object | No | Response assertions |
 | `loop` | object | No | Loop configuration |
@@ -671,6 +718,10 @@ Or with name:
 | JSONPostProcessor | jsonPathExprs | `step.capture[].path` | |
 | JSONPostProcessor | match_numbers | `step.capture[].match` | 1=first, -1=all |
 | HeaderManager | HeaderManager.headers | `step.headers` | |
+| HTTPFileArgs | HTTPFileArgs.files | `step.files` | File uploads |
+| HTTPFileArg | File.path | `step.files[].path` | File path |
+| HTTPFileArg | File.paramname | `step.files[].param` | Parameter name |
+| HTTPFileArg | File.mimetype | `step.files[].mime_type` | MIME type |
 | ResponseAssertion | test_strings (status) | `step.assert.status` | If test_field=response_code |
 | JSONPathAssertion | JSON_PATH + EXPECTED_VALUE | `step.assert.body` | |
 | ConstantTimer | delay | `step.think_time` | |
@@ -917,6 +968,14 @@ class JMXDefaults:
 
 
 @dataclass
+class FileConfig:
+    """File upload configuration."""
+    path: str
+    param: str
+    mime_type: Optional[str] = None
+
+
+@dataclass
 class CaptureConfig:
     """Variable capture configuration."""
     variable_name: str
@@ -954,6 +1013,7 @@ class ExtractedSampler:
     payload: Optional[dict | str] = None
     params: dict[str, str] = field(default_factory=dict)
     headers: dict[str, str] = field(default_factory=dict)
+    files: list[FileConfig] = field(default_factory=list)
     captures: list[CaptureConfig] = field(default_factory=list)
     assertions: Optional[AssertConfig] = None
     loop: Optional[LoopConfig] = None
@@ -979,6 +1039,7 @@ class ScenarioStep:
     headers: dict[str, str] = field(default_factory=dict)
     params: dict[str, Any] = field(default_factory=dict)
     payload: Optional[dict[str, Any]] = None
+    files: list[dict[str, str]] = field(default_factory=list)  # YAML files format
     capture: list[dict] = field(default_factory=list)  # YAML capture format
     assert_config: Optional[dict] = None  # YAML assert format
     loop: Optional[dict] = None  # YAML loop format

@@ -22,10 +22,12 @@ from jmx_to_scenario.core.data_types import (
     AssertConfig,
     CaptureConfig,
     ExtractedSampler,
+    FileConfig,
     ImportResult,
     JMXDefaults,
     LoopConfig,
     ParsedScenario,
+    ParsingContext,
     ScenarioSettings,
 )
 from jmx_to_scenario.exceptions import JMXParseException
@@ -43,8 +45,10 @@ class JMXParser:
         "BeanShellSampler": "BeanShell scripts not portable",
         "RegexExtractor": "Regex extraction not supported in pt_scenario",
         "CSVDataSetConfig": "External data sources not supported",
-        "TransactionController": "Transaction grouping not supported",
     }
+
+    # Controller elements that affect child samplers' context
+    CONTEXT_CONTROLLERS = {"RandomController", "TransactionController"}
 
     def __init__(self) -> None:
         self._root: Element | None = None
@@ -346,7 +350,10 @@ class JMXParser:
         return headers
 
     def _extract_samplers(self) -> list[ExtractedSampler]:
-        """Extract all HTTP samplers in document order.
+        """Extract all HTTP samplers with controller context.
+
+        Uses recursive traversal to track parent controller context
+        (RandomController, TransactionController, TestAction).
 
         Returns:
             List of ExtractedSampler objects
@@ -356,18 +363,96 @@ class JMXParser:
         if self._root is None:
             return samplers
 
-        # Find all HTTPSamplerProxy elements
-        for element in self._root.iter():
-            if element.tag in self.SUPPORTED_SAMPLERS:
-                children = self._get_children(element)
-                sampler = self._extract_sampler_data(element, children)
-                samplers.append(sampler)
-            elif element.tag in self.UNSUPPORTED_ELEMENTS:
-                reason = self.UNSUPPORTED_ELEMENTS[element.tag]
-                name = element.get("testname", element.tag)
-                self._warnings.append(f"{name} ignored ({reason})")
+        # Start from ThreadGroup(s)
+        for thread_group in self._root.iter("ThreadGroup"):
+            initial_context = ParsingContext()
+            self._extract_samplers_recursive(thread_group, initial_context, samplers)
 
         return samplers
+
+    def _extract_samplers_recursive(
+        self,
+        element: Element,
+        context: ParsingContext,
+        results: list[ExtractedSampler],
+    ) -> None:
+        """Recursively extract samplers tracking parent controller context.
+
+        Args:
+            element: Current element being processed
+            context: Context from parent chain (random flag, tx name, pending think time)
+            results: List to append extracted samplers to
+        """
+        children = self._get_children(element)
+        current_context = context
+
+        for child in children:
+            if not is_enabled(child):
+                continue
+
+            if child.tag == "RandomController":
+                new_ctx = ParsingContext(
+                    in_random_controller=True,
+                    transaction_name=current_context.transaction_name,
+                    pending_think_time=current_context.pending_think_time,
+                )
+                self._extract_samplers_recursive(child, new_ctx, results)
+
+            elif child.tag == "TransactionController":
+                tx_name = get_attribute(child, "testname", "Transaction")
+                new_ctx = ParsingContext(
+                    in_random_controller=current_context.in_random_controller,
+                    transaction_name=tx_name,
+                    pending_think_time=current_context.pending_think_time,
+                )
+                self._extract_samplers_recursive(child, new_ctx, results)
+
+            elif child.tag == "TestAction":
+                # TestAction with PAUSE action -> apply to next sampler
+                action_type = get_int_prop(child, "TestAction.action", 0)
+                if action_type == 1:  # PAUSE action
+                    duration = get_int_prop(child, "TestAction.duration", 0)
+                    if duration > 0:
+                        current_context = ParsingContext(
+                            in_random_controller=current_context.in_random_controller,
+                            transaction_name=current_context.transaction_name,
+                            pending_think_time=duration,
+                        )
+                # TestAction may have children - recurse
+                self._extract_samplers_recursive(child, current_context, results)
+
+            elif child.tag in self.SUPPORTED_SAMPLERS:
+                # Extract sampler with accumulated context
+                sampler_children = self._get_children(child)
+                sampler = self._extract_sampler_data(child, sampler_children)
+
+                # Apply context modifications
+                if current_context.in_random_controller:
+                    sampler.random = True
+
+                if current_context.transaction_name:
+                    sampler.name = f"{current_context.transaction_name}: {sampler.name}"
+
+                if current_context.pending_think_time and sampler.think_time is None:
+                    sampler.think_time = current_context.pending_think_time
+
+                results.append(sampler)
+
+                # Clear pending think_time after use
+                current_context = ParsingContext(
+                    in_random_controller=current_context.in_random_controller,
+                    transaction_name=current_context.transaction_name,
+                    pending_think_time=None,
+                )
+
+            elif child.tag in self.UNSUPPORTED_ELEMENTS:
+                reason = self.UNSUPPORTED_ELEMENTS[child.tag]
+                name = child.get("testname", child.tag)
+                self._warnings.append(f"{name} ignored ({reason})")
+
+            else:
+                # Other elements (controllers, etc.) - recurse into them
+                self._extract_samplers_recursive(child, current_context, results)
 
     def _extract_sampler_data(
         self, sampler: Element, children: list[Element]
@@ -400,6 +485,9 @@ class JMXParser:
         headers = dict(self._global_headers)
         headers.update(self._extract_headers(children))
 
+        # Extract file uploads
+        files = self._extract_files(sampler)
+
         # Extract captures
         captures = self._extract_captures(children)
 
@@ -423,6 +511,7 @@ class JMXParser:
             payload=payload,
             params=params,
             headers=headers,
+            files=files,
             captures=captures,
             assertions=assertions,
             loop=loop,
@@ -515,6 +604,49 @@ class JMXParser:
                 headers[name] = normalize_variable_refs(value)
 
         return headers
+
+    def _extract_files(self, sampler: Element) -> list[FileConfig]:
+        """Extract file upload configuration from HTTPSamplerProxy.
+
+        Args:
+            sampler: HTTPSamplerProxy element
+
+        Returns:
+            List of FileConfig objects
+        """
+        files: list[FileConfig] = []
+
+        # Find HTTPsampler.Files elementProp
+        file_args = sampler.find(".//elementProp[@name='HTTPsampler.Files']")
+        if file_args is None:
+            return files
+
+        # Find HTTPFileArgs.files collectionProp
+        collection = file_args.find("collectionProp[@name='HTTPFileArgs.files']")
+        if collection is None:
+            return files
+
+        # Extract each HTTPFileArg
+        for file_prop in collection.findall("elementProp"):
+            if file_prop.get("elementType") != "HTTPFileArg":
+                continue
+
+            path = get_string_prop(file_prop, "File.path")
+            param = get_string_prop(file_prop, "File.paramname")
+            mime_type = get_string_prop(file_prop, "File.mimetype")
+
+            if path and param:
+                # Normalize variable references in path
+                path = normalize_variable_refs(path)
+                files.append(
+                    FileConfig(
+                        path=path,
+                        param=param,
+                        mime_type=mime_type if mime_type else None,
+                    )
+                )
+
+        return files
 
     def _extract_captures(self, children: list[Element]) -> list[CaptureConfig]:
         """Extract JSONPostProcessor as captures.

@@ -123,6 +123,13 @@ class YAMLWriter:
         Returns:
             Dictionary for YAML step
         """
+        # Handle think_time-only steps (no endpoint)
+        if step.endpoint is None and step.think_time is not None:
+            result: dict[str, Any] = {"think_time": step.think_time}
+            if step.name and step.name != "Think Time":
+                result["name"] = step.name
+            return result
+
         result: dict[str, Any] = {
             "name": step.name,
             "endpoint": step.endpoint,
@@ -131,6 +138,10 @@ class YAMLWriter:
         # Only include enabled if False
         if not step.enabled:
             result["enabled"] = False
+
+        # Only include random if True
+        if step.random:
+            result["random"] = True
 
         # Add headers if present
         if step.headers:
@@ -144,6 +155,10 @@ class YAMLWriter:
         if step.payload is not None:
             result["payload"] = step.payload
 
+        # Add files if present
+        if step.files:
+            result["files"] = step.files
+
         # Add capture if present
         if step.capture:
             result["capture"] = step.capture
@@ -156,7 +171,7 @@ class YAMLWriter:
         if step.loop:
             result["loop"] = step.loop
 
-        # Add think_time if present
+        # Add think_time if present (for backward compatibility)
         if step.think_time is not None:
             result["think_time"] = step.think_time
 

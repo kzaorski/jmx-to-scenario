@@ -51,6 +51,13 @@ htmlcov/
 # Claude Code
 .claude/
 
+# macOS
+.DS_Store
+
+# Generated scenario files (test outputs)
+pt_scenario.yaml
+minimal_openapi.yaml
+
 # Generated reports
 comparison_report_*.md
 

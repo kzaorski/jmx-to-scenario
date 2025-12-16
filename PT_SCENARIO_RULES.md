@@ -152,6 +152,7 @@ scenario:
 | `params` | object | No | - | Path and query parameters |
 | `headers` | object | No | - | HTTP headers |
 | `payload` | object | No | - | Request body (JSON) |
+| `files` | array | No | - | File uploads |
 | `capture` | array | No | - | Variables to extract |
 | `assert` | object | No | - | Response assertions |
 | `loop` | object | No | - | Loop control (planned) |
@@ -291,6 +292,84 @@ assert:
   headers:
     Content-Type: "application/json"
 ```
+
+---
+
+## File Uploads
+
+Upload files with HTTP requests using the `files` field.
+
+### Basic Syntax
+
+```yaml
+files:
+  - path: "path/to/file.pdf"
+    param: "file"
+```
+
+### With MIME Type
+
+```yaml
+files:
+  - path: "uploads/image.png"
+    param: "avatar"
+    mime_type: "image/png"
+```
+
+### Multiple Files
+
+```yaml
+files:
+  - path: "documents/report.pdf"
+    param: "document"
+  - path: "images/logo.png"
+    param: "logo"
+```
+
+### With Variables
+
+```yaml
+files:
+  - path: "${data_dir}/upload.pdf"
+    param: "file"
+```
+
+### Complete Upload Step Example
+
+```yaml
+- name: "Upload Document"
+  endpoint: "POST /api/documents/upload"
+  headers:
+    Authorization: "Bearer ${token}"
+  files:
+    - path: "test-data/report.pdf"
+      param: "file"
+  capture:
+    - documentId: "id"
+  assert:
+    status: 201
+```
+
+### Files Field Reference
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `path` | string | Yes | Path to the file to upload |
+| `param` | string | Yes | Form field parameter name |
+| `mime_type` | string | No | MIME type (auto-detected if not specified) |
+
+### Supported MIME Types (auto-detected)
+
+| Extension | MIME Type |
+|-----------|-----------|
+| .pdf | application/pdf |
+| .json | application/json |
+| .xml | application/xml |
+| .txt | text/plain |
+| .png | image/png |
+| .jpg, .jpeg | image/jpeg |
+| .docx | application/vnd.openxmlformats-officedocument.wordprocessingml.document |
+| .xlsx | application/vnd.openxmlformats-officedocument.spreadsheetml.sheet |
 
 ---
 
@@ -508,6 +587,11 @@ scenario:                   # Required: Array of steps
     field: "value"
     nested:
       child: "value"
+
+  files:                    # Optional: File uploads
+    - path: "file.pdf"
+      param: "file"
+      mime_type: "application/pdf"
 
   capture:                  # Optional: Extract variables
     - varName               # Simple
