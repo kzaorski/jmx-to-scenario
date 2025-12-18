@@ -24,7 +24,7 @@ This is a companion tool to [jmeter-gen](https://github.com/kzaorski/jmeter-gen)
 
 ## Installation
 
-Requires Python 3.12+
+Requires Python 3.11+
 
 ```bash
 # Clone the repository
